@@ -13,7 +13,13 @@ agRIPpa is a specialized CLI tool that allows developers to:
 
 ## Installation
 
-Since agRIPpa is not published to npm, you'll need to build it locally:
+You can install agRIPpa via NPM:
+
+```bash
+npm i -g @rapsodoo/agrippa
+```
+
+Otherwise, you can build and link the package locally:
 
 ```bash
 # Clone the repository
