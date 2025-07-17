@@ -5,7 +5,6 @@ import { CrmPhase, CrmWorkflow } from './types';
 import dayjs from 'dayjs';
 import path from 'path';
 import { Backup } from './backup';
-import { LocalWorkflowNotFound } from './error';
 
 export type WorkflowConfig = {
   slug: string;
@@ -134,7 +133,7 @@ export function generateWorkflowDir(
 
   phases.forEach((phase) => {
     const phasePath = path.join(dirPath, `${toSlug(phase.name)}.py`);
-    fs.writeFileSync(phasePath, phase.code);
+    fs.writeFileSync(phasePath, phase.code.trim() + '\n');
   });
 }
 
