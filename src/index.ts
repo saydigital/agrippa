@@ -18,10 +18,13 @@ program.command('clone').action(() => {
 program
   .command('upsync')
   .option('-w, --workflow <slug>')
+  .option('-a, --all')
+  .option('--report-noop')
   .action((opts) => {
     if (opts.workflow && opts.workflow.endsWith('/')) {
       opts.workflow = opts.workflow.replace(/\/$/, '');
     }
+
     upsyncLocalWorkflow(opts);
   });
 
