@@ -1,6 +1,6 @@
 {
   "name": "@rapsodoo/agrippa",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "main": "dist/agrippa.js",
   "type": "module",
   "scripts": {
