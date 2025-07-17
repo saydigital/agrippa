@@ -83,6 +83,12 @@ Or specify a specific workflow:
 agrippa upsync -w workflow-slug
 ```
 
+To upsync all local workflows:
+
+```bash
+agrippa upsync -a
+```
+
 The tool will show you the changes that will be applied and ask for confirmation.
 
 ### Manage Backups
