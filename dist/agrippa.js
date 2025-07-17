@@ -275,7 +275,7 @@ function generateWorkflowDir(slug, wf, phases, { preserveBackups } = {}) {
     fs.writeFileSync(dotfilePath, JSON.stringify(config, null, 2));
     phases.forEach((phase) => {
         const phasePath = path.join(dirPath, `${toSlug(phase.name)}.py`);
-        fs.writeFileSync(phasePath, phase.code);
+        fs.writeFileSync(phasePath, phase.code.trim() + '\n');
     });
 }
 function listLocalWorkflows() {
@@ -790,7 +790,7 @@ const fmt = (d) => {
     return dayjs(d).format('D/M/YY HH:mm');
 };
 
-var version = "1.0.0";
+var version = "1.1.1";
 
 program.name('CLI Fasi').version(version);
 program.command('init').action(() => {
