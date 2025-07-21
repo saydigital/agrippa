@@ -15,12 +15,28 @@ export class ConnectError extends Error {
   }
 }
 
-export class LocalWorkflowNotFound extends Error {
+export class LocalResourceNotFound extends Error {
   constructor(slug: string) {
-    let msg = `Could not find local workflow "${slug}".`;
-    if (slug.endsWith('/')) {
-      msg += `Did you mean '${slug.substring(0, -1)}'?`;
-    }
+    const msg = `Could not find local resource "${slug}".`;
     super(msg);
+  }
+}
+
+export class RemoteResourceNotFound extends Error {
+  constructor(slug: string) {
+    const msg = `Could not find remote resource "${slug}".`;
+    super(msg);
+  }
+}
+
+export class NothingToSync extends Error {
+  constructor() {
+    super('Nothing to sync');
+  }
+}
+
+export class UpsyncFailure extends Error {
+  constructor(resource: string, reason = 'unknown') {
+    super(`Failed to upsync resource ${resource}: ${reason}`);
   }
 }

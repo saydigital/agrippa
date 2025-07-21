@@ -11,3 +11,11 @@ export type CrmPhase = {
   __last_update: string;
   write_date: string;
 };
+
+export type ModelFunctionAccess = {
+  id: number;
+  name: string;
+  model_name: string;
+  code: string;
+  write_date: string;
+};

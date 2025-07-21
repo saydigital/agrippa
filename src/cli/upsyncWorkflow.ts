@@ -1,7 +1,7 @@
 import { getPhases } from '@lib/api';
 import { refreshToken } from '@lib/auth';
 import { backupWorkflow } from '@lib/backup';
-import { LocalWorkflowNotFound } from '@lib/error';
+import { LocalResourceNotFound } from '@lib/error';
 import { computePhaseStatus, performUpsync, PhaseStatus } from '@lib/upsync';
 import {
   getWorkflowConfig,
@@ -210,7 +210,7 @@ async function selectWorkflow(options: CliOptions): Promise<WorkflowConfig> {
     if (isWorkflowTracked(options.workflow)) {
       return getWorkflowConfig(options.workflow);
     } else {
-      throw new LocalWorkflowNotFound(options.workflow);
+      throw new LocalResourceNotFound(options.workflow);
     }
   }
   const localWorkflows = listLocalWorkflows();

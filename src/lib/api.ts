@@ -1,7 +1,7 @@
 import { ensureEnv, getConfig } from '@config/env';
 import fetch from 'node-fetch';
 import { ConnectError } from './error';
-import { CrmPhase, CrmWorkflow } from './types';
+import { CrmPhase, CrmWorkflow, ModelFunctionAccess } from './types';
 import SimpleCache from '@lib/cache';
 
 const cache = new SimpleCache();
@@ -32,6 +32,19 @@ export function updatePhase(id: number, body: any) {
   return makeRequest<any>('PUT', `/symple.triplet.phase/${id}`, { body });
 }
 
+export function getModelFunctions() {
+  return makeRequest<ModelFunctionAccess[]>('GET', '/symple.workflow/get_mfas');
+}
+
+export function updateModelFunction(id: number, code: string) {
+  return makeRequest<void>('POST', '/symple.workflow/update_mfa', {
+    body: {
+      id,
+      code,
+    },
+  });
+}
+
 export async function makeRequest<T>(
   method: string,
   path: string,
@@ -53,7 +66,7 @@ export async function makeRequest<T>(
   const { authToken, odooRipBaseUrl } = getConfig();
   const headers = {
     Authorization: `Bearer ${authToken}`,
-    'Content-Type': 'application/json',
+    'Content-Type': method !== 'GET' ? 'application/json' : '',
   };
   const res = await fetch(`${odooRipBaseUrl}${path}`, {
     method,

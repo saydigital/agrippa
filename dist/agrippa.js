@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import fs, { readFileSync } from 'fs';
+import fs, { readFileSync, existsSync } from 'fs';
 import fetch from 'node-fetch';
 import dayjs from 'dayjs';
 import path from 'path';
@@ -21,13 +21,26 @@ class ConnectError extends Error {
         super(`Failed to load resource at ${response.url}: status code ${response.status} : ${text}`);
     }
 }
-class LocalWorkflowNotFound extends Error {
+class LocalResourceNotFound extends Error {
     constructor(slug) {
-        let msg = `Could not find local workflow "${slug}".`;
-        if (slug.endsWith('/')) {
-            msg += `Did you mean '${slug.substring(0, -1)}'?`;
-        }
+        const msg = `Could not find local resource "${slug}".`;
         super(msg);
+    }
+}
+class RemoteResourceNotFound extends Error {
+    constructor(slug) {
+        const msg = `Could not find remote resource "${slug}".`;
+        super(msg);
+    }
+}
+class NothingToSync extends Error {
+    constructor() {
+        super('Nothing to sync');
+    }
+}
+class UpsyncFailure extends Error {
+    constructor(resource, reason = 'unknown') {
+        super(`Failed to upsync resource ${resource}: ${reason}`);
     }
 }
 
@@ -42,7 +55,7 @@ function getConfig() {
         return {};
     }
 }
-function updateConfig(update) {
+function updateConfig$1(update) {
     let config = getConfig();
     config = { ...config, ...update };
     fs.writeFileSync(DOTFILE, JSON.stringify(config, null, 2));
@@ -108,6 +121,17 @@ async function getPhases(workflowId, { fromCodeOnly } = {}) {
 function updatePhase(id, body) {
     return makeRequest('PUT', `/symple.triplet.phase/${id}`, { body });
 }
+function getModelFunctions() {
+    return makeRequest('GET', '/symple.workflow/get_mfas');
+}
+function updateModelFunction(id, code) {
+    return makeRequest('POST', '/symple.workflow/update_mfa', {
+        body: {
+            id,
+            code,
+        },
+    });
+}
 async function makeRequest(method, path, args = {}) {
     const { body, cache: doCache } = args;
     const cacheKey = path;
@@ -121,7 +145,7 @@ async function makeRequest(method, path, args = {}) {
     const { authToken, odooRipBaseUrl } = getConfig();
     const headers = {
         Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/json',
+        'Content-Type': method !== 'GET' ? 'application/json' : '',
     };
     const res = await fetch(`${odooRipBaseUrl}${path}`, {
         method,
@@ -172,7 +196,7 @@ async function getToken() {
 }
 async function refreshToken() {
     const token = await getToken();
-    updateConfig({
+    updateConfig$1({
         authToken: token,
     });
 }
@@ -393,7 +417,7 @@ function initWorkspace() {
         },
     ])
         .then((answers) => {
-        updateConfig(answers);
+        updateConfig$1(answers);
     })
         .catch(() => { });
 }
@@ -498,7 +522,7 @@ function computePhaseStatus(slug, newPhases) {
         };
     });
 }
-async function performUpsync(workflowSlug, phases) {
+async function performUpsync$1(workflowSlug, phases) {
     const { dirPath } = getWorkflowPaths(workflowSlug);
     const config = getWorkflowConfig(workflowSlug);
     for (const phase of phases) {
@@ -603,7 +627,7 @@ async function doAll(options) {
     spinner.start();
     for (const wf of workflows) {
         const phases = allPhases[wf.slug];
-        await performUpsync(wf.slug, phases);
+        await performUpsync$1(wf.slug, phases);
     }
     spinner.stop();
 }
@@ -673,7 +697,7 @@ async function doOne(options, { prompt, spin }) {
     }
     await backupWorkflow$1(config.slug, { phases, name: 'Pre upsync' });
     spinner.text = 'Syncing';
-    await performUpsync(config.slug, phasesWithStatus);
+    await performUpsync$1(config.slug, phasesWithStatus);
     spinner.stop();
     spinner.text = 'Done';
 }
@@ -683,7 +707,7 @@ async function selectWorkflow$1(options) {
             return getWorkflowConfig(options.workflow);
         }
         else {
-            throw new LocalWorkflowNotFound(options.workflow);
+            throw new LocalResourceNotFound(options.workflow);
         }
     }
     const localWorkflows = listLocalWorkflows();
@@ -716,10 +740,10 @@ function backupWorkflow(options = {}) {
         restoreBackup(options, spinner);
     }
     else {
-        takeBackup(options, spinner);
+        takeBackup$1(options, spinner);
     }
 }
-async function takeBackup(options, spinner) {
+async function takeBackup$1(options, spinner) {
     const config = await selectWorkflow(options);
     spinner.text = 'Taking backup';
     spinner.start();
@@ -790,8 +814,360 @@ const fmt = (d) => {
     return dayjs(d).format('D/M/YY HH:mm');
 };
 
-var version = "1.1.1";
+var version = "1.1.3";
 
+dayjs.extend(utc);
+const DOTFILE_MFA = '.sorge.mfa';
+function getIsCloningSafe(fn, config) {
+    if (!config) {
+        return true;
+    }
+    const functionConfig = config.functions.find((localFn) => localFn.id === fn.id);
+    if (!functionConfig) {
+        // Model dir exists but this function was never cloned
+        return true;
+    }
+    const fpath = path.join(config.model, functionConfig.filename);
+    if (fs.existsSync(fpath)) {
+        return false;
+    }
+    const code = fs.readFileSync(fpath).toString('utf-8').trim();
+    if (code !== fn.code.trim()) {
+        return false;
+    }
+    return true;
+}
+function computeUpsyncOperations(configs, remoteFunctions) {
+    return configs.reduce((acc, config) => {
+        config.functions.forEach((fn) => {
+            const { lastSyncAt } = fn;
+            const fpath = path.join(config.model, fn.filename);
+            let code;
+            try {
+                code = fs.readFileSync(fpath).toString('utf-8');
+            }
+            catch {
+                throw new LocalResourceNotFound(fn.name);
+            }
+            const base = {
+                id: fn.id,
+                code,
+                name: `${config.model} / ${fn.name}`,
+            };
+            const remote = remoteFunctions.find((rfn) => rfn.id === fn.id);
+            if (!remote) {
+                acc.push({ ...base, write: false, operation: '[MISSING]' });
+                return;
+            }
+            const isStale = dayjs
+                .utc(remote.write_date)
+                .isAfter(dayjs.utc(lastSyncAt));
+            const isNoop = fs
+                .readFileSync(path.join(config.model, fn.filename))
+                .toString('utf-8')
+                .trim() === remote.code.trim();
+            if (isStale) {
+                acc.push({
+                    ...base,
+                    operation: '[SYNC-DANGER]',
+                    write: true,
+                });
+                return;
+            }
+            if (isNoop) {
+                acc.push({
+                    ...base,
+                    operation: '[NOOP]',
+                    write: false,
+                });
+                return;
+            }
+            acc.push({
+                ...base,
+                operation: '[SYNC-SAFE]',
+                write: true,
+            });
+        });
+        return acc;
+    }, []);
+}
+async function performUpsync(operations) {
+    for (const op of operations) {
+        if (op.write) {
+            try {
+                await updateModelFunction(op.id, op.code);
+            }
+            catch (err) {
+                throw new UpsyncFailure(op.name, err.message);
+            }
+        }
+    }
+}
+function takeBackup(name, remote) {
+    remote.forEach((fn) => {
+        const config = getModelFuncionAccessConfig(fn);
+        if (!config) {
+            return;
+        }
+        config.backups.push({
+            backupName: name,
+            ts: dayjs().toISOString(),
+            data: { id: fn.id, code: fn.code.trim() + '\n' },
+        });
+        updateConfig(config);
+    });
+}
+function writeFunctionToWorkspace(fn) {
+    const { model_name, name, code } = fn;
+    let config = getModelFuncionAccessConfig(fn);
+    if (!config) {
+        if (!existsSync(model_name)) {
+            fs.mkdirSync(model_name);
+        }
+        const newConfig = genConfig(fn);
+        fs.writeFileSync(path.join(model_name, DOTFILE_MFA), JSON.stringify(newConfig, null, 2));
+        config = newConfig;
+    }
+    const fpath = path.join(model_name, `${name}.py`);
+    fs.writeFileSync(fpath, code.trim() + '\n');
+    config = updateConfigFunction(config, fn);
+    updateConfig(config);
+}
+function getModelFuncionAccessConfig(fn) {
+    const allLocal = listLocalModelFunctions();
+    return allLocal.find((config) => config.model === fn.model_name) || null;
+}
+function getModelFuncionAccessConfigFromPath(p) {
+    return JSON.parse(fs.readFileSync(path.join(p, DOTFILE_MFA)).toString('utf-8'));
+}
+function listLocalModelFunctions() {
+    const dirs = fs.readdirSync('.');
+    const configs = [];
+    for (const slug of dirs) {
+        const dotfilePath = path.join(slug, DOTFILE_MFA);
+        try {
+            if (fs.existsSync(dotfilePath)) {
+                configs.push(getModelFuncionAccessConfigFromPath(slug));
+            }
+        }
+        catch {
+            continue;
+        }
+    }
+    return configs;
+}
+function genConfig(fn) {
+    return {
+        model: fn.model_name,
+        backups: [],
+        functions: [
+            {
+                id: fn.id,
+                name: fn.name,
+                filename: `${fn.name}.py`,
+                lastSyncAt: dayjs().toISOString(),
+            },
+        ],
+    };
+}
+function updateConfig(update) {
+    const fpath = path.join(update.model, DOTFILE_MFA);
+    fs.writeFileSync(fpath, JSON.stringify(update, null, 2));
+}
+function updateConfigFunction(config, fn) {
+    if (config.functions.find((func) => func.id === fn.id)) {
+        config.functions = config.functions.map((func) => {
+            if (func.id === fn.id) {
+                return {
+                    name: func.name,
+                    filename: `${fn.name}.py`,
+                    id: fn.id,
+                    lastSyncAt: dayjs().toISOString(),
+                };
+            }
+            return func;
+        });
+    }
+    else {
+        config.functions.push({
+            name: fn.name,
+            filename: `${fn.name}.py`,
+            id: fn.id,
+            lastSyncAt: dayjs().toISOString(),
+        });
+    }
+    return config;
+}
+
+async function cloneModelFunction() {
+    const spinner = ora('Getting token').start();
+    await refreshToken();
+    spinner.text = 'Loading functions';
+    const functions = await getModelFunctions();
+    spinner.stop();
+    const choice = await inquirer.prompt([
+        {
+            name: 'choice',
+            type: 'search',
+            message: 'Choose a function to clone',
+            source: (input) => {
+                if (!input) {
+                    return functions.map((fn) => ({
+                        name: `${fn.model_name} / ${fn.name}`,
+                        value: fn.id,
+                    }));
+                }
+                const pat = new RegExp(input, 'i');
+                return functions
+                    .filter((fn) => pat.test(`${fn.model_name} / ${fn.name}`))
+                    .map((fn) => ({
+                    name: `${fn.model_name} / ${fn.name}`,
+                    value: fn.id,
+                }));
+            },
+        },
+    ]);
+    const toClone = functions.find((fn) => fn.id === choice.choice);
+    const config = getModelFuncionAccessConfig(toClone);
+    const isSafe = getIsCloningSafe(toClone, config);
+    if (isSafe) {
+        return writeFunctionToWorkspace(toClone);
+    }
+    const confirm = await inquirer.prompt([
+        {
+            name: 'confirm',
+            message: 'Local changes will be overwritten by the cloning.',
+            type: 'confirm',
+        },
+    ]);
+    if (confirm.confirm) {
+        return writeFunctionToWorkspace(toClone);
+    }
+}
+async function upsyncModelFunction(options) {
+    const { choose } = options || {};
+    const spinner = ora('Getting token').start();
+    await refreshToken();
+    spinner.text = 'Loading functions';
+    const functions = await getModelFunctions();
+    let localModels = listLocalModelFunctions();
+    spinner.stop();
+    if (choose) {
+        const choice = await inquirer.prompt([
+            {
+                name: 'choice',
+                type: 'search',
+                message: 'Choose fuction to upsync',
+                source: (input) => {
+                    const baseChoices = localModels.reduce((acc, current) => {
+                        return [
+                            ...acc,
+                            ...current.functions.map((fn) => ({
+                                name: `${current.model} / ${fn.name}`,
+                                value: fn.id,
+                            })),
+                        ];
+                    }, []);
+                    if (!input) {
+                        return baseChoices;
+                    }
+                    const pat = new RegExp(input, 'i');
+                    return baseChoices.filter((fn) => pat.test(fn.name));
+                },
+            },
+        ]);
+        localModels = localModels
+            .filter((cf) => cf.functions.some((fn) => fn.id === choice.choice))
+            .map((cf) => ({
+            ...cf,
+            functions: cf.functions.filter((fn) => fn.id === choice.choice),
+        }));
+    }
+    const operations = computeUpsyncOperations(localModels, functions);
+    if (operations.filter((o) => o.write).length === 0) {
+        throw new NothingToSync();
+    }
+    const answer = await inquirer.prompt([
+        {
+            name: 'confirm',
+            type: 'confirm',
+            message: [
+                'Summary of operations:',
+                ...operations
+                    .filter((op) => op.write)
+                    .map((op) => `- ${op.operation} ${op.name}`),
+            ].join('\n'),
+        },
+    ]);
+    if (answer.confirm) {
+        takeBackup('PRE UPSYNC', functions);
+        spinner.text = 'Performing upsync';
+        spinner.start();
+        await performUpsync(operations);
+        spinner.stop();
+    }
+}
+async function refreshModelFunctions(options) {
+    const { choose } = options || {};
+    const spinner = ora('Getting token').start();
+    await refreshToken();
+    spinner.text = 'Loading functions';
+    const functions = await getModelFunctions();
+    let localModels = listLocalModelFunctions();
+    spinner.stop();
+    if (choose) {
+        const choice = await inquirer.prompt([
+            {
+                name: 'choice',
+                type: 'search',
+                message: 'Choose fuction to upsync',
+                source: (input) => {
+                    const baseChoices = localModels.reduce((acc, current) => {
+                        return [
+                            ...acc,
+                            ...current.functions.map((fn) => ({
+                                name: `${current.model} / ${fn.name}`,
+                                value: fn.id,
+                            })),
+                        ];
+                    }, []);
+                    if (!input) {
+                        return baseChoices;
+                    }
+                    const pat = new RegExp(input, 'i');
+                    return baseChoices.filter((fn) => pat.test(fn.name));
+                },
+            },
+        ]);
+        localModels = localModels
+            .filter((cf) => cf.functions.some((fn) => fn.id === choice.choice))
+            .map((cf) => ({
+            ...cf,
+            functions: cf.functions.filter((fn) => fn.id === choice.choice),
+        }));
+    }
+    const flag = await inquirer.prompt([
+        {
+            name: 'accept',
+            type: 'confirm',
+            message: 'Local version will be overwritten',
+        },
+    ]);
+    if (!flag.accept) {
+        return;
+    }
+    localModels.forEach((model) => {
+        model.functions.forEach((fn) => {
+            const remote = functions.find((rfn) => rfn.id === fn.id);
+            if (!remote) {
+                throw new RemoteResourceNotFound(fn.name);
+            }
+            writeFunctionToWorkspace(remote);
+        });
+    });
+}
+
+// ----------------- Workflow -----------------
 program.name('CLI Fasi').version(version);
 program.command('init').action(() => {
     initWorkspace();
@@ -830,4 +1206,22 @@ program
     }
     refreshLocalWorkflows(opts);
 });
+// ----------------- RIP -----------------
+const mfa = program.command('mfa');
+mfa.command('clone').action(() => {
+    cloneModelFunction();
+});
+mfa
+    .command('upsync')
+    .option('--choose')
+    .action((opts) => {
+    upsyncModelFunction(opts);
+});
+mfa
+    .command('refresh')
+    .option('--choose')
+    .action((opts) => {
+    refreshModelFunctions(opts);
+});
+mfa.command('backup');
 program.parse();

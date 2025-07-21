@@ -20,7 +20,7 @@ export type WorkflowConfig = {
   backups: Backup[];
 };
 
-function toSlug(str: string) {
+export function toSlug(str: string) {
   return slugify(str, {
     lower: true,
     trim: true,

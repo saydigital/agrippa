@@ -7,6 +7,13 @@ import { upsyncLocalWorkflow } from '@cli/upsyncWorkflow';
 import { backupWorkflow } from '@cli/backupWorkflow';
 import { program } from 'commander';
 import { version } from '../package.json';
+import {
+  cloneModelFunction,
+  refreshModelFunctions,
+  upsyncModelFunction,
+} from '@cli/mfa';
+
+// ----------------- Workflow -----------------
 
 program.name('CLI Fasi').version(version);
 program.command('init').action(() => {
@@ -49,5 +56,25 @@ program
     }
     refreshLocalWorkflows(opts);
   });
+
+// ----------------- RIP -----------------
+
+const mfa = program.command('mfa');
+mfa.command('clone').action(() => {
+  cloneModelFunction();
+});
+mfa
+  .command('upsync')
+  .option('--choose')
+  .action((opts) => {
+    upsyncModelFunction(opts);
+  });
+mfa
+  .command('refresh')
+  .option('--choose')
+  .action((opts) => {
+    refreshModelFunctions(opts);
+  });
+mfa.command('backup');
 
 program.parse();
