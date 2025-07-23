@@ -814,7 +814,7 @@ const fmt = (d) => {
     return dayjs(d).format('D/M/YY HH:mm');
 };
 
-var version = "1.1.3";
+var version = "1.1.4";
 
 dayjs.extend(utc);
 const DOTFILE_MFA = '.sorge.mfa';
@@ -866,19 +866,19 @@ function computeUpsyncOperations(configs, remoteFunctions) {
                 .readFileSync(path.join(config.model, fn.filename))
                 .toString('utf-8')
                 .trim() === remote.code.trim();
-            if (isStale) {
-                acc.push({
-                    ...base,
-                    operation: '[SYNC-DANGER]',
-                    write: true,
-                });
-                return;
-            }
             if (isNoop) {
                 acc.push({
                     ...base,
                     operation: '[NOOP]',
                     write: false,
+                });
+                return;
+            }
+            if (isStale) {
+                acc.push({
+                    ...base,
+                    operation: '[SYNC-DANGER]',
+                    write: true,
                 });
                 return;
             }
@@ -1100,7 +1100,12 @@ async function upsyncModelFunction(options) {
         },
     ]);
     if (answer.confirm) {
-        takeBackup('PRE UPSYNC', functions);
+        localModels.forEach((m) => {
+            const remote = functions
+                .filter((f) => f.model_name === m.model)
+                .filter((f) => m.functions.some(({ id }) => f.id === id));
+            takeBackup('PRE UPSYNC', remote);
+        });
         spinner.text = 'Performing upsync';
         spinner.start();
         await performUpsync(operations);
