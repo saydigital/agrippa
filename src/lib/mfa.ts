@@ -102,19 +102,20 @@ export function computeUpsyncOperations(
             .toString('utf-8')
             .trim() === remote.code.trim();
 
-        if (isStale) {
-          acc.push({
-            ...base,
-            operation: '[SYNC-DANGER]',
-            write: true,
-          });
-          return;
-        }
         if (isNoop) {
           acc.push({
             ...base,
             operation: '[NOOP]',
             write: false,
+          });
+          return;
+        }
+
+        if (isStale) {
+          acc.push({
+            ...base,
+            operation: '[SYNC-DANGER]',
+            write: true,
           });
           return;
         }

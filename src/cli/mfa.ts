@@ -132,7 +132,12 @@ export async function upsyncModelFunction(options: UpsyncCliOptions) {
   ]);
 
   if (answer.confirm) {
-    takeBackup('PRE UPSYNC', functions);
+    localModels.forEach((m) => {
+      const remote = functions
+        .filter((f) => f.model_name === m.model)
+        .filter((f) => m.functions.some(({ id }) => f.id === id));
+      takeBackup('PRE UPSYNC', remote);
+    });
     spinner.text = 'Performing upsync';
     spinner.start();
     await performUpsync(operations);
